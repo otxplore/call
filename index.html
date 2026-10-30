@@ -1,0 +1,505 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OTX OS - WebRTC Test</title>
+<style>
+:root {
+  --bg:#101321;
+  --panel:#1b2336;
+  --text:#f5f5f5;
+  --muted:#aab5c7;
+  --yellow:#ffc928;
+  --orange:#ff8c24;
+  --border:#303b50;
+  --red:#ef4444;
+  --green:#22c55e;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0;
+  padding:20px;
+  background:var(--bg);
+  color:var(--text);
+  font-family:Arial,sans-serif;
+}
+.container { max-width:760px; margin:auto; }
+header { text-align:center; margin:20px 0 28px; }
+.logo { color:var(--yellow); font-size:25px; font-weight:bold; }
+.subtitle { color:var(--muted); margin-top:8px; }
+.card {
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:18px;
+  margin-bottom:16px;
+}
+h2 { font-size:17px; margin:0 0 14px; }
+p, .help { color:var(--muted); font-size:13px; line-height:1.6; }
+button {
+  border:0;
+  border-radius:9px;
+  padding:12px 15px;
+  margin:4px 3px 4px 0;
+  background:var(--yellow);
+  color:#151515;
+  font-weight:bold;
+  cursor:pointer;
+}
+button.secondary {
+  background:#344158;
+  color:white;
+}
+button.danger {
+  background:var(--red);
+  color:white;
+}
+button:disabled { opacity:.45; cursor:not-allowed; }
+textarea {
+  width:100%;
+  min-height:115px;
+  resize:vertical;
+  background:#0d1220;
+  color:#e5e7eb;
+  border:1px solid var(--border);
+  border-radius:9px;
+  padding:12px;
+  font-size:12px;
+  margin:8px 0;
+}
+.status {
+  display:flex;
+  align-items:center;
+  gap:9px;
+  color:var(--muted);
+  font-size:13px;
+}
+.dot {
+  width:10px;
+  height:10px;
+  background:#777;
+  border-radius:50%;
+}
+.dot.connected { background:var(--green); }
+video {
+  width:100%;
+  max-height:360px;
+  background:#080b12;
+  border-radius:10px;
+  margin-top:10px;
+}
+.controls { margin-top:12px; }
+.hidden { display:none; }
+.notice {
+  border-left:3px solid var(--yellow);
+  padding:8px 12px;
+  background:#282a2b;
+  color:#ddd;
+  font-size:12px;
+  line-height:1.6;
+}
+footer {
+  text-align:center;
+  color:var(--muted);
+  font-size:12px;
+  margin:25px 0;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<header>
+  <div class="logo">OTX OS</div>
+  <div class="subtitle">Internet Calling & Screen Sharing</div>
+</header>
+
+<div class="card">
+  <h2>Connection status</h2>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Not connected</span>
+  </div>
+  <p id="detailText">Create a call or accept an invitation from another user.</p>
+</div>
+
+<div class="card">
+  <h2>1. Start a call</h2>
+  <p>
+    On the first device, click the button below.
+    Allow microphone access. Wait for the invitation code to appear.
+  </p>
+  <button id="createBtn" onclick="createCall()">Create call</button>
+  <textarea id="offerBox" placeholder="Your invitation code will appear here..." readonly></textarea>
+  <button class="secondary" onclick="copyCode('offerBox')">Copy invitation</button>
+</div>
+
+<div class="card">
+  <h2>2. Accept a call</h2>
+  <p>
+    On the second device, paste the invitation code received
+    from the first user.
+  </p>
+  <textarea id="incomingOffer" placeholder="Paste invitation code here..."></textarea>
+  <button id="acceptBtn" onclick="acceptCall()">Accept invitation</button>
+
+  <p>After accepting, share the answer code with the first user.</p>
+  <textarea id="answerBox" placeholder="Your answer code will appear here..." readonly></textarea>
+  <button class="secondary" onclick="copyCode('answerBox')">Copy answer</button>
+</div>
+
+<div class="card">
+  <h2>3. Complete the connection</h2>
+  <p>
+    The first user should paste the answer code received from
+    the second user below.
+  </p>
+  <textarea id="incomingAnswer" placeholder="Paste answer code here..."></textarea>
+  <button id="connectBtn" onclick="completeCall()">Complete connection</button>
+</div>
+
+<div class="card">
+  <h2>4. Call controls</h2>
+  <div class="controls">
+    <button id="muteBtn" class="secondary" onclick="toggleMute()" disabled>
+      Mute microphone
+    </button>
+    <button id="shareBtn" onclick="shareScreen()" disabled>
+      Share screen
+    </button>
+    <button id="stopShareBtn" class="secondary" onclick="stopScreenShare()" disabled>
+      Stop sharing
+    </button>
+    <button id="endBtn" class="danger" onclick="endCall()" disabled>
+      End call
+    </button>
+  </div>
+
+  <h2 style="margin-top:22px;">Remote screen</h2>
+  <video id="remoteVideo" autoplay playsinline></video>
+  <audio id="remoteAudio" autoplay></audio>
+</div>
+
+<div class="card">
+  <h2>Instructions</h2>
+  <div class="notice">
+    Both users must open this page over HTTPS or localhost.
+    Allow microphone access when requested. Screen sharing requires
+    a browser that supports getDisplayMedia().
+    <br><br>
+    This test uses public STUN servers and manual connection-code
+    exchange. Direct connections may fail on some networks.
+  </div>
+</div>
+
+<footer>OTX OS Communication Lab · Experimental WebRTC version</footer>
+</div>
+
+<script>
+let peer = null;
+let localStream = null;
+let remoteStream = null;
+let screenStream = null;
+let videoSender = null;
+let muted = false;
+
+const rtcConfig = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun.cloudflare.com:3478" }
+  ]
+};
+
+function setStatus(message, connected = false) {
+  document.getElementById("statusText").textContent = message;
+  document.getElementById("statusDot").classList.toggle("connected", connected);
+  document.getElementById("detailText").textContent =
+    connected ? "Your WebRTC connection is active." : message;
+}
+
+function updateControls(active) {
+  document.getElementById("muteBtn").disabled = !active;
+  document.getElementById("shareBtn").disabled = !active;
+  document.getElementById("endBtn").disabled = !active;
+}
+
+async function setupPeer() {
+  if (peer) peer.close();
+
+  setStatus("Requesting microphone permission...");
+
+  localStream = await navigator.mediaDevices.getUserMedia({
+    audio: true,
+    video: false
+  });
+
+  peer = new RTCPeerConnection(rtcConfig);
+  remoteStream = new MediaStream();
+
+  localStream.getTracks().forEach(track => {
+    peer.addTrack(track, localStream);
+  });
+
+  // Reserve a video channel for screen sharing.
+  videoSender = peer.addTransceiver("video", {
+    direction: "sendrecv"
+  }).sender;
+
+  peer.ontrack = event => {
+    if (!remoteStream.getTracks().some(t => t.id === event.track.id)) {
+      remoteStream.addTrack(event.track);
+    }
+
+    document.getElementById("remoteAudio").srcObject = remoteStream;
+    document.getElementById("remoteVideo").srcObject = remoteStream;
+
+    document.getElementById("remoteAudio").play().catch(() => {});
+    document.getElementById("remoteVideo").play().catch(() => {});
+  };
+
+  peer.onconnectionstatechange = () => {
+    const state = peer?.connectionState || "closed";
+
+    if (state === "connected") {
+      setStatus("Connected", true);
+      updateControls(true);
+    } else if (state === "connecting") {
+      setStatus("Connecting...");
+    } else if (state === "failed") {
+      setStatus("Connection failed. Try again on another network.");
+    } else if (state === "disconnected") {
+      setStatus("Connection interrupted. Waiting for reconnection...");
+    } else if (state === "closed") {
+      setStatus("Call ended.");
+    }
+  };
+
+  peer.oniceconnectionstatechange = () => {
+    if (peer?.iceConnectionState === "failed") {
+      setStatus("ICE connection failed. This network may require a TURN relay.");
+    }
+  };
+
+  updateControls(false);
+}
+
+function waitForIceGathering() {
+  return new Promise((resolve, reject) => {
+    if (!peer || peer.iceGatheringState === "complete") {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("ICE gathering timed out. Please try again."));
+    }, 30000);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      peer?.removeEventListener("icegatheringstatechange", check);
+    }
+
+    function check() {
+      if (peer?.iceGatheringState === "complete") {
+        cleanup();
+        resolve();
+      }
+    }
+
+    peer.addEventListener("icegatheringstatechange", check);
+  });
+}
+
+function getDescriptionCode() {
+  return JSON.stringify(peer.localDescription);
+}
+
+async function createCall() {
+  try {
+    document.getElementById("createBtn").disabled = true;
+    setStatus("Creating invitation...");
+
+    await setupPeer();
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    setStatus("Gathering connection information...");
+    await waitForIceGathering();
+
+    document.getElementById("offerBox").value = getDescriptionCode();
+    setStatus("Invitation ready. Share it with the other user.");
+  } catch (error) {
+    setStatus(error.message);
+    alert(error.message);
+  } finally {
+    document.getElementById("createBtn").disabled = false;
+  }
+}
+
+async function acceptCall() {
+  try {
+    const code = document.getElementById("incomingOffer").value.trim();
+    if (!code) throw new Error("Paste the invitation code first.");
+
+    document.getElementById("acceptBtn").disabled = true;
+    await setupPeer();
+
+    const offer = JSON.parse(code);
+    await peer.setRemoteDescription(offer);
+
+    setStatus("Preparing your answer...");
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+
+    await waitForIceGathering();
+
+    document.getElementById("answerBox").value = getDescriptionCode();
+    setStatus("Answer ready. Send it to the first user.");
+  } catch (error) {
+    setStatus(error.message);
+    alert(error.message);
+  } finally {
+    document.getElementById("acceptBtn").disabled = false;
+  }
+}
+
+async function completeCall() {
+  try {
+    const code = document.getElementById("incomingAnswer").value.trim();
+    if (!code) throw new Error("Paste the answer code first.");
+    if (!peer) throw new Error("Create an invitation first.");
+
+    const answer = JSON.parse(code);
+    await peer.setRemoteDescription(answer);
+
+    setStatus("Answer received. Establishing connection...");
+  } catch (error) {
+    setStatus(error.message);
+    alert(error.message);
+  }
+}
+
+async function copyCode(id) {
+  const value = document.getElementById(id).value;
+  if (!value) {
+    alert("There is no code to copy yet.");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(value);
+    alert("Connection code copied.");
+  } catch {
+    document.getElementById(id).select();
+    document.execCommand("copy");
+    alert("Copy the selected connection code.");
+  }
+}
+
+function toggleMute() {
+  if (!localStream) return;
+
+  muted = !muted;
+  localStream.getAudioTracks().forEach(track => {
+    track.enabled = !muted;
+  });
+
+  document.getElementById("muteBtn").textContent =
+    muted ? "Unmute microphone" : "Mute microphone";
+}
+
+async function shareScreen() {
+  try {
+    if (!peer || peer.connectionState !== "connected") {
+      throw new Error("Connect the call before sharing your screen.");
+    }
+
+    if (!navigator.mediaDevices.getDisplayMedia) {
+      throw new Error("Screen sharing is not supported by this browser.");
+    }
+
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: false
+    });
+
+    const track = screenStream.getVideoTracks()[0];
+    await videoSender.replaceTrack(track);
+
+    track.onended = () => stopScreenShare();
+
+    document.getElementById("shareBtn").disabled = true;
+    document.getElementById("stopShareBtn").disabled = false;
+
+    setStatus("Screen sharing is active.", true);
+  } catch (error) {
+    if (error.name !== "NotAllowedError") alert(error.message);
+  }
+}
+
+async function stopScreenShare() {
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+
+  if (videoSender) {
+    try {
+      await videoSender.replaceTrack(null);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  document.getElementById("shareBtn").disabled =
+    !(peer && peer.connectionState === "connected");
+  document.getElementById("stopShareBtn").disabled = true;
+
+  if (peer?.connectionState === "connected") {
+    setStatus("Connected. Screen sharing stopped.", true);
+  }
+}
+
+function endCall() {
+  if (screenStream) {
+    screenStream.getTracks().forEach(track => track.stop());
+    screenStream = null;
+  }
+
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+
+  if (peer) {
+    peer.close();
+    peer = null;
+  }
+
+  videoSender = null;
+  remoteStream = null;
+  muted = false;
+
+  document.getElementById("remoteVideo").srcObject = null;
+  document.getElementById("remoteAudio").srcObject = null;
+  document.getElementById("muteBtn").textContent = "Mute microphone";
+  document.getElementById("shareBtn").disabled = true;
+  document.getElementById("stopShareBtn").disabled = true;
+
+  updateControls(false);
+  setStatus("Call ended.");
+
+  document.getElementById("offerBox").value = "";
+  document.getElementById("answerBox").value = "";
+  document.getElementById("incomingOffer").value = "";
+  document.getElementById("incomingAnswer").value = "";
+}
+</script>
+</body>
+</html>
+
